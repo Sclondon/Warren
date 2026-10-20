@@ -166,6 +166,8 @@ func _ready() -> void:
 	_cloud_layer()
 	_rain = Rain.put(self, maze)
 	_ground_fog = GroundFog.put(self, get_parent())
+	# (lying on the ground as the rain splashes on it: the water's top where there is water)
+	_ground_fog.ground_of = _rain.ground_at
 	if maze:
 		_clearing_fog = ClearingFog.put(self, maze)
 		# (there from the start, as thick as a morning has it)

@@ -3,9 +3,9 @@ extends Node3D
 ## A low fog lying on the ground some of the time (Weather.ground_fog says how
 ## much; the user, 2026-10-18: "We should also have some fog layers low to the
 ## ground sometimes that change heights and have animated scrolling snoise that
-## you can leave a wake in"). One flat sheet round the camera at the top of the
-## fog, drawn by a shader that works out from the depth buffer how far each line
-## of sight runs through the fog under it: thin looking down at your feet, thick
+## you can leave a wake in"). Drawn over the whole screen by a shader that works
+## out from the depth buffer how far each line of sight runs through the fog lying
+## on the ground it meets (wherever the camera is, in it or over it): thin looking down at your feet, thick
 ## and white looking out across it, nothing where the ground rises out of it.
 ## Its top rolls (two layers of noise drifting with the wind), and it rises and
 ## sinks slowly (Weather says how high).
@@ -28,6 +28,13 @@ const WAKE_STEP := 0.45
 ## How many bodies stir it at once, and how near the camera they must be, metres.
 const STIRRERS := 6
 const STIR_REACH := 40.0
+## The ground's heights round the camera, for the fog to lie on (Maze.ground_height:
+## the clearing's hills, the dunes, the ponds): a grid `GRID` points across `GRID_SPAN`
+## metres, made again a few rows a frame once the camera is `GRID_MOVE` off its middle.
+const GRID := 64
+const GRID_SPAN := 256.0
+const GRID_MOVE := 48.0
+const GRID_ROWS_A_FRAME := 4
 
 var world: Node
 var _sheet: MeshInstance3D
@@ -50,6 +57,15 @@ var _clock := 0.0
 var _stirrers: Array[Node3D] = []
 var _last_at := {}
 var _look_for := 0.0
+## How high the ground is at a point (world y; Rain.ground_at: the water's top where there is
+## water), for the grid; if unset, the maze's own ground.
+var ground_of: Callable
+var _heights: ImageTexture
+var _heights_middle := Vector2.INF
+## The grid being made (the next one), its middle, and the row it is up to (-1: none being made).
+var _next_heights: Image
+var _next_middle := Vector2.ZERO
+var _next_row := -1
 
 
 ## Ground fog under `parent`, stirred by what is in `world` (its player, the
@@ -71,8 +87,10 @@ func _ready() -> void:
 	for i in STIRRERS:
 		_heads.append(Vector4.ZERO)
 		_head_wide.append(0.0)
-	var plane := PlaneMesh.new()
-	plane.size = Vector2.ONE * REACH * 2.0
+	# (a quad over the whole screen: the shader puts it there, and works the fog out
+	# for each pixel, lying on whatever ground that pixel shows)
+	var plane := QuadMesh.new()
+	plane.size = Vector2(2.0, 2.0)
 	var shader := Shader.new()
 	shader.code = SHADER.replace("TRAIL_SIZE", str(_trail_size)).replace("STIRRERS", str(STIRRERS)).replace("//LOW", "#define LOW" if low else "")
 	_look = ShaderMaterial.new()
@@ -85,6 +103,7 @@ func _ready() -> void:
 	_sheet.material_override = _look
 	_sheet.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_sheet.top_level = true
+	_sheet.extra_cull_margin = 16384.0
 	_sheet.visible = false
 	add_child(_sheet)
 
@@ -97,13 +116,14 @@ func show_fog(amount: float, height: float, wind: float, light: float, mist: Col
 	if not on:
 		return
 	_clock += delta
-	_stir(eye, ground + height, delta)
-	# (kept under the camera: seen from inside it, the sheet would show nothing)
-	var top := minf(ground + height, eye.y - 0.35)
-	_sheet.global_position = Vector3(eye.x, top, eye.z)
-	_look.set_shader_parameter(&"top", top)
-	_look.set_shader_parameter(&"ground", ground)
-	_look.set_shader_parameter(&"amount", amount * smoothstep(ground + 0.1, ground + 0.4, top))
+	_stir(eye, height, delta)
+	_map_ground(eye)
+	# (it lies on the ground everywhere, the same wherever the camera is, in it or over
+	# it: the user, 2026-10-19, "the ground fog seems to follow the boys or the cameras height")
+	_sheet.global_position = eye
+	_look.set_shader_parameter(&"height", height)
+	_look.set_shader_parameter(&"floor_y", ground)
+	_look.set_shader_parameter(&"amount", amount * smoothstep(0.1, 0.4, height))
 	_look.set_shader_parameter(&"colour", mist.lightened(0.12) * lerpf(0.6, 1.0, light))
 	_look.set_shader_parameter(&"wind", Vector2(0.35, 0.12) * (1.0 + wind * 4.0))
 	_look.set_shader_parameter(&"clock", _clock)
@@ -115,7 +135,7 @@ func show_fog(amount: float, height: float, wind: float, light: float, mist: Col
 
 
 ## The wake: a point left behind each body near the camera every WAKE_STEP it goes.
-func _stir(eye: Vector3, top: float, delta: float) -> void:
+func _stir(eye: Vector3, height: float, delta: float) -> void:
 	_look_for -= delta
 	if _look_for <= 0.0:
 		_look_for = 1.0
@@ -127,8 +147,9 @@ func _stir(eye: Vector3, top: float, delta: float) -> void:
 		if not is_instance_valid(body):
 			continue
 		var at := body.global_position
-		# (only what is down in it)
-		if at.y > top + 0.3:
+		# (only what is down in it, on the ground where it is)
+		var maze: Maze = world.get(&"maze") if world else null
+		if at.y > (maze.ground_height(at) if maze else 0.0) + height + 0.3:
 			continue
 		var wide := 0.9 if body is MazeEnemy else 0.7
 		var last: Vector3 = _last_at.get(body, Vector3.INF)
@@ -142,6 +163,40 @@ func _stir(eye: Vector3, top: float, delta: float) -> void:
 			last = at
 		_heads[k] = Vector4(last.x, last.z, at.x, at.z)
 		_head_wide[k] = wide
+
+
+## Keeps the grid of the ground's heights round the camera up to date: the first
+## made at once, the next a few rows a frame once he has gone far enough from its middle.
+func _map_ground(eye: Vector3) -> void:
+	var maze: Maze = world.get(&"maze") if world else null
+	if maze == null:
+		return
+	var flat := Vector2(eye.x, eye.z)
+	if _next_row < 0 and (_heights_middle == Vector2.INF or flat.distance_to(_heights_middle) > GRID_MOVE):
+		_next_heights = Image.create_empty(GRID, GRID, false, Image.FORMAT_RF)
+		_next_middle = flat.snappedf(GRID_SPAN / GRID)
+		_next_row = 0
+	if _next_row < 0:
+		return
+	var rows := GRID if _heights == null else GRID_ROWS_A_FRAME
+	var corner := _next_middle - Vector2.ONE * GRID_SPAN * 0.5
+	var step := GRID_SPAN / (GRID - 1)
+	for r in rows:
+		if _next_row >= GRID:
+			break
+		for c in GRID:
+			var at := Vector3(corner.x + c * step, 0.0, corner.y + _next_row * step)
+			_next_heights.set_pixel(c, _next_row, Color(float(ground_of.call(at)) if ground_of.is_valid() else maze.ground_height(at), 0.0, 0.0))
+		_next_row += 1
+	if _next_row >= GRID:
+		_next_row = -1
+		if _heights == null:
+			_heights = ImageTexture.create_from_image(_next_heights)
+		else:
+			_heights.update(_next_heights)
+		_heights_middle = _next_middle
+		_look.set_shader_parameter(&"heights", _heights)
+		_look.set_shader_parameter(&"heights_rect", Vector4(corner.x, corner.y, GRID_SPAN, GRID_SPAN))
 
 
 ## The nearest few bodies to the camera: the players and runners, and the hunters.
@@ -178,14 +233,17 @@ func stir_at(at: Vector3, wide := 0.7) -> void:
 
 const SHADER := """
 shader_type spatial;
-render_mode unshaded, blend_mix, depth_draw_never, cull_back, shadows_disabled;
+render_mode unshaded, blend_mix, depth_draw_never, depth_test_disabled, cull_disabled, shadows_disabled;
 //LOW
 
-// The top of the fog (world y), how far its top rolls below that, metres, and
+// How high the fog lies over the ground, metres, how far its top rolls below that, and
 // how thick it is (1 - its share of the light that gets through each metre).
-uniform float top = 1.0;
-// The ground under the camera (world y): the wake pushes the fog most of the way down to it.
-uniform float ground = 0.0;
+uniform float height = 1.0;
+// The floor under the camera (world y): the fog lies on what is seen only near it (not up on ledges).
+uniform float floor_y = 0.0;
+// The ground's heights round the camera (world y in red), over [x, z, width, depth] of the world.
+uniform sampler2D heights : filter_linear, repeat_disable;
+uniform vec4 heights_rect = vec4(0.0, 0.0, 0.0, 0.0);
 uniform float roll = 0.6;
 uniform float density = 0.5;
 uniform float amount = 1.0;
@@ -206,7 +264,6 @@ uniform vec4 heads[STIRRERS];
 uniform float head_wide[STIRRERS];
 uniform sampler2D depth_texture : hint_depth_texture, filter_nearest, repeat_disable;
 
-varying vec3 at;
 
 float hash2(vec2 p) {
 	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -237,19 +294,16 @@ vec3 unproject(vec2 screen_uv, float depth, mat4 inv_projection) {
 }
 
 void vertex() {
-	at = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	// (over the whole screen: the fog is worked out for each pixel from what is behind it)
+	POSITION = vec4(VERTEX.xy, 0.0, 1.0);
 }
 
-void fragment() {
-	vec3 behind = unproject(SCREEN_UV, texture(depth_texture, SCREEN_UV).r, INV_PROJECTION_MATRIX);
-	vec3 under = (INV_VIEW_MATRIX * vec4(behind, 1.0)).xyz;
-	float through = max(length(behind) - length(VERTEX), 0.0);
-	// The wake: how much the fog is pushed away here, and which way (to swirl it).
-	vec2 here = mix(at.xz, under.xz, 0.35);
+// The wake at `here`: how much of the fog it has pushed away, and which way (to swirl it).
+float wake(vec2 here, out vec2 push) {
 	// (each stretch of track clears a soft band along it, widening and closing up
 	// as it ages; overlapping ones blend, not the strongest alone, so no edges)
 	float kept = 1.0;
-	vec2 push = vec2(0.0);
+	push = vec2(0.0);
 	for (int i = 0; i < TRAIL_SIZE; i++) {
 		vec4 point = trail[i];
 		float age = (clock - point.z) / wake_seconds;
@@ -274,21 +328,54 @@ void fragment() {
 			push += off / max(d, 0.001) * c;
 		}
 	}
-	float cleared = 1.0 - kept;
 	push = push / max(length(push), 1.0);
-	// Its top: two layers of noise drifting with the wind, the wake swirling them aside.
+	return 1.0 - kept;
+}
+
+// How far along a line of sight `length` long from `eye` (y) to `end` (y) runs under `top`.
+float under_top(float eye_y, float end_y, float length_of, float top) {
+	if (eye_y <= top && end_y <= top) {
+		return length_of;
+	}
+	if (eye_y > top && end_y > top) {
+		return 0.0;
+	}
+	float t = clamp((top - eye_y) / (end_y - eye_y), 0.0, 1.0);
+	return length_of * (eye_y > top ? 1.0 - t : t);
+}
+
+void fragment() {
+	vec3 behind = unproject(SCREEN_UV, texture(depth_texture, SCREEN_UV).r, INV_PROJECTION_MATRIX);
+	vec3 under = (INV_VIEW_MATRIX * vec4(behind, 1.0)).xyz;
+	vec3 eye = CAMERA_POSITION_WORLD;
+	float far = length(behind);
+	float l = min(far, reach);
+	vec3 way = (under - eye) / max(far, 0.001);
+	vec3 end = eye + way * l;
+	// The ground it lies on here: the ground's own height under what the line of
+	// sight meets (grass, a boy, a wall's foot), from the grid round the camera, so
+	// that it lies on the ground wherever he is and however high the camera, not
+	// on a sheet at his height.
+	vec2 cell = (end.xz - heights_rect.xy) / max(heights_rect.zw, vec2(0.001));
+	float base = (heights_rect.z > 0.0 && cell.x >= 0.0 && cell.y >= 0.0 && cell.x <= 1.0 && cell.y <= 1.0) ? texture(heights, cell).r : floor_y;
+	// (where the line of sight meets the fog's top, or a little way in if he is in it: its noise and wake there)
+	float level = base + height;
+	float meets = under_top(eye.y, end.y, l, level);
+	float t_in = eye.y > level ? (l - meets) : 0.0;
+	vec2 here = (eye + way * clamp(t_in + 2.0, 0.0, l)).xz;
+	vec2 push;
+	float cleared = wake(here, push);
+	// Its top: two layers of noise drifting with the wind, the wake swirling them aside and pushing it down.
 	vec2 p = here + push * cleared * 1.5;
 	float n = vnoise(p * 0.11 + wind * clock * 0.11) * 0.6 + vnoise(p * 0.31 - wind.yx * clock * 0.23) * 0.4;
 #ifndef LOW
 	n = n * 0.8 + vnoise(p * 0.9 + vec2(clock * 0.07, -clock * 0.05)) * 0.2;
 #endif
-	float surface = top - roll * (1.0 - n) - cleared * max(top - ground, 0.3) * 0.8;
-	// How far the line of sight runs under that before it meets what is behind.
-	float fall = max(top - under.y, 0.001);
-	float inside = through * clamp((surface - under.y) / fall, 0.0, 1.0);
+	float top = base + height - roll * (1.0 - n) - cleared * height * 0.8;
+	float inside = under_top(eye.y, end.y, l, top);
 	float thick = density * mix(0.15, 1.6, smoothstep(0.2, 0.85, n));
 	float a = 1.0 - exp(-inside * thick);
-	float edge = 1.0 - smoothstep(reach * 0.55, reach * 0.95, length(at.xz - CAMERA_POSITION_WORLD.xz));
+	float edge = 1.0 - smoothstep(reach * 0.55, reach * 0.95, length(here - eye.xz));
 	ALBEDO = colour * mix(0.9, 1.06, n);
 	ALPHA = clamp(a * amount * edge * (1.0 - cleared * 0.45), 0.0, 1.0);
 }
