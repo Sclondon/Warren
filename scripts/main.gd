@@ -14,7 +14,7 @@ const INK := Color(0.93, 0.9, 0.8)
 const MOSS := Color(0.45, 0.62, 0.33)
 const STONE := Color(0.13, 0.14, 0.13, 0.86)
 
-## "title", "join", "lobby" or "play".
+## "title", "join", "lobby", "loading", "play" or "paused".
 var screen := "title"
 var world: World
 var round_number := 1
@@ -40,6 +40,7 @@ var _preview_camera: Camera3D
 ## Talking to the others in a room (see Voice), kept from round to round.
 var voice: Voice
 var _mic: Button
+var _pause: Control
 
 
 func _ready() -> void:
@@ -59,10 +60,12 @@ func _ready() -> void:
 	if Flags.value("clearing") != "" and not testing:
 		start_clearing()
 		return
-	# (tests go straight to a round: the menu's maze behind the title would only cost them time)
-	if not testing:
-		_show_preview()
-	show_title()
+	# (straight into a maze alone; the title's choices are in the pause menu. Tests
+	# start their own rounds from the title)
+	if testing:
+		show_title()
+	else:
+		start_solo()
 
 
 # --- Screens ----------------------------------------------------------------
@@ -86,6 +89,75 @@ func show_title() -> void:
 	page.add_child(_spacer(1.0))
 
 
+## The pause menu, over the round (MENU on the HUD, Escape, or a pad's Start): what
+## the title had, a new maze alone, making or joining a room, and on with the round.
+## Playing alone the round stands still behind it; in a room it goes on. The game
+## goes straight into a maze, with no title first (the user, 2026-10-19: "The game
+## should just load straigh into the maze, rather than menu then maze. Lets add a
+## pause menu and put the main menu options there").
+func show_pause() -> void:
+	if world == null:
+		show_title()
+		return
+	# (not while it is still loading, nor while he wakes: the HUD it is on is hidden then)
+	if screen == "loading" or (_hud != null and not _hud.visible):
+		return
+	if _hud == null:
+		_show_hud()
+	_close_pause()
+	screen = "paused"
+	if not Net.active():
+		world.process_mode = Node.PROCESS_MODE_DISABLED
+	_pause = ColorRect.new()
+	_pause.color = Color(0.03, 0.04, 0.03, 0.55)
+	_pause.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_hud.add_child(_pause)
+	var page := VBoxContainer.new()
+	page.set_anchors_preset(Control.PRESET_FULL_RECT)
+	page.offset_left = 24
+	page.offset_right = -24
+	page.alignment = BoxContainer.ALIGNMENT_CENTER
+	page.add_theme_constant_override("separation", 16)
+	_pause.add_child(page)
+	page.add_child(_label("WARREN", 56, INK))
+	page.add_child(_button("RESUME", resume))
+	if Net.active():
+		page.add_child(_label("ROOM %s" % Net.code, 26, INK.darkened(0.2)))
+		page.add_child(_button("LEAVE THE ROOM", leave))
+	else:
+		page.add_child(_button("NEW MAZE", new_maze))
+		page.add_child(_button("MAKE A ROOM", make_room))
+		page.add_child(_button("JOIN A ROOM", show_join))
+		# (with dev tools on, a round of the clearing alone, to test in: World.clearing_only)
+		if DevTools.enabled():
+			page.add_child(_button("CLEARING ONLY", start_clearing, 26))
+	_status = _label("Up to four can play together." if not Net.active() else "", 20, INK.darkened(0.3))
+	page.add_child(_status)
+
+
+## Back to the round from the pause menu.
+func resume() -> void:
+	_close_pause()
+	if world:
+		world.process_mode = Node.PROCESS_MODE_INHERIT
+	screen = "play" if world else "title"
+
+
+func _close_pause() -> void:
+	if _pause and is_instance_valid(_pause):
+		_pause.queue_free()
+	_pause = null
+
+
+## Back from joining: to the pause menu over the round, or the title if there is none.
+func _back() -> void:
+	if world:
+		_show_hud()
+		show_pause()
+	else:
+		show_title()
+
+
 func show_join() -> void:
 	screen = "join"
 	_code_typed = ""
@@ -107,7 +179,7 @@ func show_join() -> void:
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_theme_constant_override("separation", 12)
-	row.add_child(_button("BACK", show_title, 28, 170))
+	row.add_child(_button("BACK", _back, 28, 170))
 	row.add_child(_button("DELETE", _type_letter.bind(""), 28, 170))
 	row.add_child(_button("JOIN", _join_typed, 28, 170))
 	page.add_child(row)
@@ -133,7 +205,7 @@ func show_lobby() -> void:
 		page.add_child(_button("START", Net.start_game))
 	else:
 		page.add_child(_label("The room's maker starts the game.", 22, INK.darkened(0.2)))
-	page.add_child(_button("LEAVE", leave))
+	page.add_child(_button("LEAVE THE ROOM" if Net.active() else "MENU", leave if Net.active() else show_pause))
 	_status = _label("", 22, INK.darkened(0.2))
 	page.add_child(_status)
 	page.add_child(_spacer(0.5))
@@ -165,7 +237,7 @@ func _show_hud() -> void:
 		_mic.custom_minimum_size.y = 48
 		bar.add_child(_mic)
 		_show_mic()
-	var menu := _button("LEAVE", leave, 20, 110)
+	var menu := _button("MENU", show_pause, 20, 110)
 	menu.custom_minimum_size.y = 48
 	bar.add_child(menu)
 	_toast = _label("", 34, INK)
@@ -198,7 +270,7 @@ func _show_round_over() -> void:
 		page.add_child(_button("NEXT MAZE", next_round))
 	else:
 		page.add_child(_label("The room's maker picks the next maze.", 20, INK.darkened(0.2)))
-	page.add_child(_button("LEAVE", leave))
+	page.add_child(_button("LEAVE THE ROOM" if Net.active() else "MENU", leave if Net.active() else show_pause))
 
 
 # --- Flow -------------------------------------------------------------------
@@ -237,13 +309,23 @@ func next_round() -> void:
 		_begin([{"slot": 0, "look": look}], 0, false, Maze.seed_for(_solo_code, round_number))
 
 
+## A new maze alone, from the pause menu.
+func new_maze() -> void:
+	clearing_only = false
+	start_solo()
+
+
+## Out of the room (or the round), and on into a new maze alone (tests: back to the title).
 func leave() -> void:
 	if Net.active():
 		Net.leave()
+	_close_pause()
 	_end_world()
 	clearing_only = false
-	_show_preview()
-	show_title()
+	if testing:
+		show_title()
+	else:
+		start_solo()
 
 
 func _begin_online() -> void:
@@ -254,8 +336,9 @@ func _begin_online() -> void:
 
 
 func _begin(players: Array, my_slot: int, online: bool, seed_value: int) -> void:
+	_close_pause()
 	_end_world()
-	screen = "play"
+	screen = "loading"
 	world = World.new()
 	world.name = "World"
 	world.clearing_only = clearing_only
@@ -272,6 +355,7 @@ func _begin(players: Array, my_slot: int, online: bool, seed_value: int) -> void
 	voice.world = world
 	world.escaped.connect(_on_escaped)
 	world.caught.connect(func(_seat: int) -> void: _say("Caught! Back to the clearing."))
+	screen = "play"
 	_show_hud()
 
 
@@ -488,6 +572,20 @@ func _process(delta: float) -> void:
 		_toast.modulate.a = clampf(_toast_time, 0.0, 1.0)
 
 
+## Escape, or a pad's Start: the pause menu, and back to the round.
+func _unhandled_input(event: InputEvent) -> void:
+	var key := event as InputEventKey
+	var toggle := (key != null and key.pressed and not key.echo and key.keycode == KEY_ESCAPE) or event.is_action_pressed(&"pad_start")
+	if not toggle:
+		return
+	if screen == "play":
+		show_pause()
+		get_viewport().set_input_as_handled()
+	elif screen == "paused":
+		resume()
+		get_viewport().set_input_as_handled()
+
+
 func _unhandled_key_input(event: InputEvent) -> void:
 	if screen != "join" or not (event is InputEventKey) or not event.pressed:
 		return
@@ -535,7 +633,7 @@ func _show_mic() -> void:
 
 
 func _on_room_changed() -> void:
-	if screen in ["title", "join", "lobby"]:
+	if screen in ["title", "join", "lobby", "paused"]:
 		show_lobby()
 
 
@@ -556,7 +654,11 @@ func _on_packet(_from: int, kind: int, data: PackedByteArray) -> void:
 func _on_closed(reason: String) -> void:
 	var why := {"host": "The room's maker left.", "empty": "Everyone left.", "lost": "Lost the connection."}
 	leave()
-	_status.text = why.get(reason, "The room closed.")
+	var said: String = why.get(reason, "The room closed.")
+	if _status and is_instance_valid(_status):
+		_status.text = said
+	else:
+		_say(said)
 
 
 func _on_failed(message: String) -> void:

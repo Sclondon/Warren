@@ -22,7 +22,7 @@ extends Node3D
 const REACH := 220.0
 ## How many points of wake are kept (on a phone, fewer), how long one lasts,
 ## seconds, and how far a body goes between them, metres.
-const TRAIL := Vector2i(32, 16)
+const TRAIL := Vector2i(48, 24)
 const WAKE_SECONDS := 7.0
 const WAKE_STEP := 0.45
 ## How many bodies stir it at once, and how near the camera they must be, metres.
@@ -108,6 +108,7 @@ func show_fog(amount: float, height: float, wind: float, light: float, mist: Col
 	_look.set_shader_parameter(&"wind", Vector2(0.35, 0.12) * (1.0 + wind * 4.0))
 	_look.set_shader_parameter(&"clock", _clock)
 	_look.set_shader_parameter(&"trail", _trail)
+	_look.set_shader_parameter(&"newest", (_next - 1 + _trail_size) % _trail_size)
 	_look.set_shader_parameter(&"trail_from", _trail_from)
 	_look.set_shader_parameter(&"heads", _heads)
 	_look.set_shader_parameter(&"head_wide", _head_wide)
@@ -197,6 +198,9 @@ uniform float wake_seconds = 7.0;
 uniform vec4 trail[TRAIL_SIZE];
 // Where the same body left the point before each ([x, z]): each point is the end of a stretch from it.
 uniform vec2 trail_from[TRAIL_SIZE];
+// Which of them was left last: the oldest few fade out as they come round to be
+// left again, so that running, the end of the wake closes up, not snaps shut.
+uniform int newest = 0;
 // The newest stretch of each stirring body's wake, from its last point to it ([x, z, x, z]), and how wide (0: none).
 uniform vec4 heads[STIRRERS];
 uniform float head_wide[STIRRERS];
@@ -253,7 +257,10 @@ void fragment() {
 			vec2 off = off_stretch(here, trail_from[i], point.xy);
 			float wide = point.w * mix(1.0, 2.2, age);
 			float d = length(off);
-			float c = pow(1.0 - smoothstep(0.0, wide, d), 2.0) * pow(1.0 - age, 1.6);
+			// (how many have been left since: the oldest half fade away before their turn comes round)
+			float since = float((newest - i + TRAIL_SIZE) % TRAIL_SIZE);
+			float left = 1.0 - smoothstep(float(TRAIL_SIZE) * 0.45, float(TRAIL_SIZE) - 1.0, since);
+			float c = pow(1.0 - smoothstep(0.0, wide, d), 2.0) * pow(1.0 - age, 1.6) * left;
 			kept *= 1.0 - c;
 			push += off / max(d, 0.001) * c * (1.0 - age);
 		}
