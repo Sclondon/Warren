@@ -49,10 +49,11 @@ extends Resource
 @export_range(0.0, 1.0, 0.001, "suffix:of faces") var wall_moss_patches := 0.12
 ## How many times its own size the concrete texture is laid on the maze walls and their ledges.
 @export_range(0.5, 12.0, 0.001, "suffix:x") var wall_texture_scale := 4.0
-## How far round the maze walls' top edges and corners are worn, metres (ledges half this; 0: square).
-@export_range(0.0, 0.6, 0.01, "suffix:m") var wall_edge_rounding := 0.14
-## How far round the border wall's edges are worn, metres (and the clearing's, for the first section).
-@export_range(0.0, 1.5, 0.01, "suffix:m") var border_wall_edge_rounding := 0.4
+## How far round the maze walls' top edges and corners are worn, metres (ledges half this; 0: square,
+## as they are unless set: rounded, the concrete stretched round the edges, the user, 2026-10-19).
+@export_range(0.0, 0.6, 0.01, "suffix:m") var wall_edge_rounding := 0.0
+## How far round the border wall's edges are worn, metres (and the clearing's, for the first section; 0: square).
+@export_range(0.0, 1.5, 0.01, "suffix:m") var border_wall_edge_rounding := 0.0
 ## How weathered its walls are: grime under their tops, paler chipped corners, uneven faces (0 none, 1 most).
 @export_range(0.0, 1.0, 0.01) var wall_weathering := 0.5
 

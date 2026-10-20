@@ -455,7 +455,14 @@ void vertex() {
 	float cycle = floor(t);
 	age = fract(t) * every / life;
 	seed = hash1(id * 1.31 + cycle * 7.7);
-	vec2 where = eye.xz + ahead * reach * 0.6 + (vec2(hash1(id * 1.7 + cycle * 3.1), hash1(id * 2.3 + cycle * 5.7)) - 0.5) * 1.4 * reach;
+	// (a spot fixed in the world for this splash, of the copies of it every `span`
+	// across, the one nearest the patch in front of the camera: so it stays where it
+	// fell as he moves, not carried along with him, the user, 2026-10-19: "the rain
+	// splash decals move with the player when they shouldnt")
+	float span = 1.4 * reach;
+	vec2 centre = eye.xz + ahead * reach * 0.6;
+	vec2 spot = vec2(hash1(id * 1.7 + cycle * 3.1), hash1(id * 2.3 + cycle * 5.7)) * span;
+	vec2 where = centre + mod(spot - centre + span * 0.5, span) - span * 0.5;
 	float y = ground.x + dot(ground.yz, where - eye.xz);
 	if (mod(id, 2.0) > 0.5 && upper > y) {
 		y = upper;

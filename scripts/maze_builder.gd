@@ -268,8 +268,10 @@ func _walls(body: StaticBody3D, pieces: MazeLayout) -> void:
 		var walls := MeshInstance3D.new()
 		walls.mesh = (chunks[key] as WallMesh).mesh()
 		walls.material_override = materials[kind]
-		# (lost in the mist past this; the editor, seen from high over it all, shows all)
-		walls.visibility_range_end = 0.0 if Engine.is_editor_hint() else WALL_FAR
+		# (lost in the mist past this; the editor, seen from high over it all, shows all;
+		# and the great walls never, the clearing's and those between sections: they tower
+		# over the rest and are seen from right across the clearing, the user, 2026-10-19)
+		walls.visibility_range_end = 0.0 if Engine.is_editor_hint() or key[0] == GREAT_LOOK else WALL_FAR
 		body.add_child(walls)
 
 
