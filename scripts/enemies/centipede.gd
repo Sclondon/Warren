@@ -5,6 +5,9 @@ extends MazeEnemy
 ## component with nothing of the maze in it); this is what it does, and drives
 ## that body.
 ##
+## - IT PROWLS the passages slowly, along the feet of the walls, wandering or
+##   steered by the director (MazeEnemy.goal), never resting (`start_resting`
+##   and `rest_after` 0, as it is in the game now). Set to rest instead:
 ## - AT REST it lies coiled in a dead end, its feelers stirring, until it
 ##   notices someone (MazeEnemy's senses; it feels footsteps through the ground
 ##   from further off than the others hear them). Then it rears up
@@ -45,9 +48,10 @@ const ROOMY := 2.3
 @export var catch_distance := 0.85
 ## Seconds of searching with nobody found, and of prowling before it goes to coil up (0: never).
 @export var search_time := 3.2
-@export var rest_after := 35.0
-## Coiled in a dead end until it notices someone (else it prowls from the start).
-@export var start_resting := true
+## (0, and it prowls on: the user, 2026-10-19, "most monsters should wander rather than sit")
+@export var rest_after := 0.0
+## Coiled in a dead end until it notices someone (else, as it is now, it prowls from the start).
+@export var start_resting := false
 
 var state := State.RESTING
 ## What it looks like (made in `_ready`).

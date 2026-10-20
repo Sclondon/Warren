@@ -1,11 +1,12 @@
 class_name MazeFrog
 extends MazeEnemy
-## A giant toad in the maze: it squats wet and still in a dead end, and when
+## A giant toad in the maze: it goes about the passages in lazy leaps, and when
 ## someone comes it hunts them in great leaps and catches them with its
 ## tongue. It is drawn and moved by GiantToad (creatures/frog/giant_toad.gd);
 ## this is what it thinks.
 ##
-## - SIT. Still in its dead end, throat pulsing, now and then a croak. It sees
+## - SIT. Between lazy leaps about the passages (MazeEnemy.goal: wandering, or
+##   steered by the director), throat pulsing, now and then a croak. It sees
 ##   down the passages (`sight_range`) and hears anyone near (`hear_range`).
 ## - ALERT. Someone seen: it croaks (its throat blown up into a great bubble)
 ##   and turns to them, slowly, shuffling round.
@@ -20,7 +21,7 @@ extends MazeEnemy
 ##   sideways does it, just), duck under it (it is aimed at the chest), or be
 ##   out of reach (running straight away from it is only safe from far off).
 ## - RECOVER. After a shot, caught or not, it sits a moment, gulping.
-## When it has lost everyone it leaps back to its dead end and squats again.
+## When it has lost everyone it goes about again.
 ##
 ## As a puppet it follows the host's news; its leaps, shots and croaks come
 ## as counts in its flag (and the point they were at), and are played here too.
@@ -136,12 +137,13 @@ func _physics_process(delta: float) -> void:
 				if _croak_in <= 0.0:
 					_croak()
 					_croak_in = _rng.randf_range(8.0, 16.0)
-				# (lost them: back home, in leaps, and settle facing out as it was)
-				var away := Vector2(_home.x - global_position.x, _home.z - global_position.z)
+				# (nobody after: it goes about the passages in lazy leaps, where it wanders
+				# or is steered (goal()); the user, 2026-10-19: "most monsters should
+				# wander rather than sit")
+				var aim := goal()
+				var away := Vector2(aim.x - global_position.x, aim.z - global_position.z)
 				if away.length() > 3.0 and _rest_left <= 0.0:
-					_leap_towards(_home)
-				elif away.length() <= 3.0:
-					_turn_to_yaw(_home_yaw, delta)
+					_leap_towards(aim)
 		Mode.ALERT:
 			_alert_left -= delta
 			if after:
@@ -150,6 +152,14 @@ func _physics_process(delta: float) -> void:
 			if _alert_left <= 0.0:
 				mode = Mode.SIT
 		Mode.HOP:
+			if _far:
+				# (nobody near enough to see it, and its body still: the leap is done at once)
+				global_position = Vector3(_point.x, maze.ground_height(_point) + 0.05, _point.z)
+				toad.global_position = global_position
+				toad.settle()
+				mode = Mode.SIT
+				_rest_left = rest_time * _rng.randf_range(0.8, 1.3) * (1.0 if hunting() else 3.0)
+				return
 			var push := toad.leap_push()
 			velocity.x = push.x
 			velocity.z = push.z
@@ -160,7 +170,9 @@ func _physics_process(delta: float) -> void:
 				return
 			if toad.leap_stage() == GiantToad.Leap.NONE:
 				mode = Mode.SIT
-				_rest_left = rest_time * _rng.randf_range(0.8, 1.3)
+				# (going about, not after anyone, it sits longer between leaps)
+				# (going about, not after anyone, it sits longer between leaps)
+				_rest_left = rest_time * _rng.randf_range(0.8, 1.3) * (1.0 if hunting() else 3.0) * (1.0 if hunting() else 3.0)
 		Mode.WINDUP:
 			if after and toad.windup_progress() < aim_lock:
 				_point = _chest(after)

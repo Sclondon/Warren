@@ -8,7 +8,9 @@ extends MazeEnemy
 ##
 ## - PERCH. They go in gangs (`gang()`: three or four), each clinging to the
 ##   face of the nearest wall, `perch_height` up, head down like a gargoyle, looking out over the hall, now
-##   and then chittering (you hear them before you see them).
+##   and then chittering (you hear them before you see them). Not for long: after
+##   a while each comes down and goes ABOUT the passages (wandering, or steered by
+##   the director), and then up onto a new perch on the nearest wall where it has got to.
 ## - Noticing someone (MazeEnemy's senses), one cackles, its gang takes up the
 ##   hunt, and each scurries DOWN the wall head first and comes after them on
 ##   all fours (HUNT), by the passages, at `run_speed`: faster than he runs,
@@ -94,6 +96,14 @@ var _call := 0.0
 var _held := 0.0
 var _won := false
 var _chitter_in := 3.0
+## It does not keep to one perch (the user, 2026-10-19: imps should wander): after
+## PERCH_FOR seconds on it, it comes down and goes ABOUT for ABOUT_FOR, then finds
+## the nearest wall where it has got to and goes up onto a new perch there.
+const PERCH_FOR := Vector2(15.0, 40.0)
+const ABOUT_FOR := Vector2(20.0, 45.0)
+var _perch_left := 0.0
+var _about_left := 0.0
+var _roaming := false
 var _spin := Vector3.ZERO
 var _tumble := Basis.IDENTITY
 var _leaps := 0
@@ -145,6 +155,7 @@ func _ready() -> void:
 	_chitter_in = _rng.randf_range(1.0, 6.0)
 	spotted.connect(func(_who: Node3D) -> void: _cackle())
 	_find_perch.call_deferred()
+	_perch_left = _rng.randf_range(PERCH_FOR.x * 0.3, PERCH_FOR.y)
 
 
 ## Finds the wall face nearest where it was put, `perch_height` up, and goes onto it.
@@ -223,6 +234,13 @@ func _physics_process(delta: float) -> void:
 				body.chitter()
 			if after:
 				mode = Mode.DOWN
+			else:
+				# (sat long enough: down, and off about the passages)
+				_perch_left -= delta
+				if _perch_left <= 0.0:
+					_roaming = true
+					_about_left = _rng.randf_range(ABOUT_FOR.x, ABOUT_FOR.y)
+					mode = Mode.DOWN
 		Mode.DOWN:
 			_heading = Vector3.DOWN
 			_surface += Vector3.DOWN * climb_speed * delta
@@ -230,11 +248,12 @@ func _physics_process(delta: float) -> void:
 			if _surface.y <= floor_y + 0.25:
 				_pos = Vector3(_surface.x, floor_y, _surface.z) + _wall_normal * 0.3
 				_yaw = atan2(_wall_normal.x, _wall_normal.z)
-				mode = Mode.HUNT if after else Mode.HOME
+				mode = Mode.HUNT if after else (Mode.ABOUT if _roaming else Mode.HOME)
 		Mode.CLIMB:
 			_heading = (_perch.origin - _surface)
 			if _heading.length() < 0.1:
 				mode = Mode.PERCH
+				_perch_left = _rng.randf_range(PERCH_FOR.x, PERCH_FOR.y)
 				_surface = _perch.origin
 				_heading = _perch.basis.z
 			else:
@@ -267,9 +286,17 @@ func _physics_process(delta: float) -> void:
 			_home(after, delta)
 		Mode.ABOUT:
 			if after:
+				_roaming = false
 				mode = Mode.HUNT
 			else:
 				_walk_to(goal(), walk_speed, delta, 0.3)
+				# (gone about long enough: up onto the nearest wall where it has got to)
+				_about_left -= delta
+				if _roaming and _about_left <= 0.0:
+					_roaming = false
+					_find_perch()
+					if _has_perch and mode == Mode.ABOUT:
+						mode = Mode.HOME
 	global_position = _surface if mode in [Mode.PERCH, Mode.DOWN, Mode.CLIMB] else _pos
 	velocity = _vel
 
