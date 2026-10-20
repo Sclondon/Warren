@@ -25,7 +25,7 @@ extends Node3D
 const STREAKS := Vector2i(6000, 2400)
 const DROPLETS := Vector2i(520, 200)
 const SHEETS := Vector2i(14, 7)
-const SPLASHES := Vector2i(220, 90)
+const SPLASHES := Vector2i(380, 150)
 ## How wide and high a box the streaks fall in round the camera, and the droplets, metres.
 const STREAK_BOX := Vector3(22.0, 20.0, 22.0)
 const DROPLET_BOX := Vector3(9.0, 8.0, 9.0)
@@ -81,8 +81,7 @@ func _ready() -> void:
 ## The rain now: how hard (0 to 1), how windy (0 to 1), the lightning (0 to 1),
 ## how light it is (DayCycle.daylight), and the mist's colour; round `eye`, with
 ## `feet` where he stands if it is above the ground (else NAN).
-func show_rain(rain: float, wind: float, flash: float, light: float, mist: Color, eye: Vector3, ahead: Vector3, feet: float, delta: float) -> void:
-	var look := Vector2(ahead.x, ahead.z).normalized()
+func show_rain(rain: float, wind: float, flash: float, light: float, mist: Color, eye: Vector3, _ahead: Vector3, feet: float, delta: float) -> void:
 	# (not there at all unless it is raining: idle, it still costs a lot to draw)
 	var raining := rain > 0.02
 	if raining != _on:
@@ -125,7 +124,6 @@ func show_rain(rain: float, wind: float, flash: float, light: float, mist: Color
 	var east := ground_at(eye + Vector3(2.0, 0.0, 0.0))
 	var north := ground_at(eye + Vector3(0.0, 0.0, 2.0))
 	_splash_look.set_shader_parameter(&"eye", eye)
-	_splash_look.set_shader_parameter(&"ahead", look if look.length_squared() > 0.0 else Vector2(0.0, 1.0))
 	_splash_look.set_shader_parameter(&"ground", Vector3(ground, (east - ground) * 0.5, (north - ground) * 0.5))
 	_splash_look.set_shader_parameter(&"upper", feet if not is_nan(feet) and feet > ground + 0.6 else -10000.0)
 	_splash_look.set_shader_parameter(&"tint", Color(Color(0.86, 0.89, 0.92) * lit, 0.42))
@@ -432,8 +430,6 @@ uniform vec3 eye;
 uniform vec3 ground = vec3(0.0);
 uniform float upper = -10000.0;
 uniform float reach = 9.0;
-// Which way the camera looks, flat (most of them are put in front of it).
-uniform vec2 ahead = vec2(0.0, 1.0);
 // How long one splash lasts, and how often it comes round, seconds.
 uniform float life = 0.34;
 uniform float period = 0.55;
@@ -456,11 +452,13 @@ void vertex() {
 	age = fract(t) * every / life;
 	seed = hash1(id * 1.31 + cycle * 7.7);
 	// (a spot fixed in the world for this splash, of the copies of it every `span`
-	// across, the one nearest the patch in front of the camera: so it stays where it
-	// fell as he moves, not carried along with him, the user, 2026-10-19: "the rain
-	// splash decals move with the player when they shouldnt")
-	float span = 1.4 * reach;
-	vec2 centre = eye.xz + ahead * reach * 0.6;
+	// across, the one nearest the camera: so it stays where it fell as he moves, not
+	// carried along with him, the user, 2026-10-19: "the rain splash decals move with
+	// the player when they shouldnt"; round the camera itself, not the way it looks,
+	// so turning it moves none of them: "they still seem to move around when I rotate
+	// the camera")
+	float span = 2.0 * reach;
+	vec2 centre = eye.xz;
 	vec2 spot = vec2(hash1(id * 1.7 + cycle * 3.1), hash1(id * 2.3 + cycle * 5.7)) * span;
 	vec2 where = centre + mod(spot - centre + span * 0.5, span) - span * 0.5;
 	float y = ground.x + dot(ground.yz, where - eye.xz);
@@ -481,7 +479,8 @@ void vertex() {
 		}
 	}
 	float dist = length(at - CAMERA_POSITION_WORLD);
-	faded = 1.0 - smoothstep(reach * 0.8, reach * 1.3, length(at.xz - eye.xz));
+	// (gone before the edge of the patch round the camera, where they come round anew)
+	faded = 1.0 - smoothstep(reach * 0.55, reach * 0.95, length(at.xz - eye.xz));
 	foot_clip = PROJECTION_MATRIX * VIEW_MATRIX * vec4(at, 1.0);
 	foot_far = length((VIEW_MATRIX * vec4(at, 1.0)).xyz);
 	VERTEX = world - MODEL_MATRIX[3].xyz;
