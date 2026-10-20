@@ -31,7 +31,12 @@ vec3 bent(mat4 model, vec3 vertex, float tall, float sway_by, float time) {
 	vec3 here = (model * vec4(vertex, 1.0)).xyz;
 	float t = time * 1.3 + dot(here.xz, vec2(0.21, 0.17));
 	vec3 move = vec3(sin(t), 0.0, cos(t * 0.8)) * sway_by * tall * tall;
-	vec3 push = pushed(here, 1.0);
+	// (pushed as a whole from its foot, all of it leaning the one way: from each
+	// point's own place, its fronds were each pushed their own way and the plant
+	// warped round him, the user, 2026-10-20: "The ferns seem to warp around the
+	// player rather than be pushed away")
+	vec3 foot = (model * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+	vec3 push = pushed(foot, 1.0);
 	move.xz += push.xz * tall * 0.9;
 	move.y -= push.y * tall * 0.4;
 	return inverse(mat3(model)) * move;
