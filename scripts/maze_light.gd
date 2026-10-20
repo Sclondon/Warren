@@ -2,7 +2,8 @@
 class_name MazeLight
 ## The light of the maze, after Inside: an overcast day, nearly without colour, so
 ## that the only strong colour is the shirts. A pale sky and a mist that thickens
-## with distance and low down, until the far walls are flat grey shapes; soft light
+## with distance and low down, out of which the far walls loom as dark slabs
+## against the sky (they draw the mist themselves: share_mist); soft light
 ## from above with soft shadows; a little glow round bright things. The game's
 ## World puts it up, and so does a MazeLayout open in the editor, so that a maze
 ## laid out by hand is seen as it will be played.
@@ -68,3 +69,28 @@ static func put(parent: Node, internal := false) -> void:
 	sun.directional_shadow_fade_start = 0.6
 	sun.shadow_normal_bias = 1.2
 	parent.add_child(sun, false, Node.INTERNAL_MODE_BACK if internal else Node.INTERNAL_MODE_DISABLED)
+	share_mist(environment, sun)
+
+
+## Hands the mist on to the maze's walls, which draw it themselves (Wall's
+## `looming` shader, so that far walls stand dark against the sky instead of
+## fading into it): its colour (as the mist would have it, a share of the sky's
+## horizon in it), how thick it is, and low down, and where the sun is and its
+## colour (the mist is lighter towards it), and how brooding the far walls are
+## (`brood`: 1 on a grey day, less on a sunny one). DayCycle calls it whenever it changes them.
+static func share_mist(environment: Environment, sun: DirectionalLight3D, brood := 1.0) -> void:
+	var colour := environment.fog_light_color.srgb_to_linear()
+	var sky := environment.sky.sky_material as ProceduralSkyMaterial if environment.sky else null
+	if sky:
+		colour = colour.lerp(sky.sky_horizon_color.srgb_to_linear(), environment.fog_aerial_perspective)
+	colour *= environment.fog_light_energy
+	RenderingServer.global_shader_parameter_set(&"mist_colour", Vector3(colour.r, colour.g, colour.b))
+	RenderingServer.global_shader_parameter_set(&"mist_density", environment.fog_density if environment.fog_enabled else 0.0)
+	RenderingServer.global_shader_parameter_set(&"mist_height", environment.fog_height)
+	RenderingServer.global_shader_parameter_set(&"mist_height_density", environment.fog_height_density if environment.fog_enabled else 0.0)
+	RenderingServer.global_shader_parameter_set(&"mist_brood", brood)
+	if sun:
+		var basis := sun.global_basis if sun.is_inside_tree() else sun.basis
+		var light := sun.light_color.srgb_to_linear() * sun.light_energy
+		RenderingServer.global_shader_parameter_set(&"mist_sun", basis.z.normalized())
+		RenderingServer.global_shader_parameter_set(&"mist_sun_colour", Vector3(light.r, light.g, light.b) if sun.visible else Vector3.ZERO)

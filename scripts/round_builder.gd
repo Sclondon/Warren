@@ -110,7 +110,8 @@ func _ready() -> void:
 			materials[[key[0], key[1]]] = shared[key[0]]
 		elif not materials.has([key[0], key[1]]):
 			var great: bool = key[0] == Part.GREAT
-			var made := Wall.material_for(MazeBuilder.GREAT_LOOK if great else MazeBuilder.MAZE_LOOK, true)
+			# (drawing their own mist, to loom out of it far off: Wall.looming_shader)
+			var made := Wall.material_for(MazeBuilder.GREAT_LOOK if great else MazeBuilder.MAZE_LOOK, true, Color.WHITE, true)
 			var style: MazeStyle = plan.rings[key[1]].style if key[1] < plan.rings.size() else null
 			if great:
 				made.set_shader_parameter(&"tile_size", Wall.LOOKS[MazeBuilder.GREAT_LOOK][1] * MazeBuilder.GREAT_TILE_SCALE)

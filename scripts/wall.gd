@@ -78,6 +78,20 @@ uniform float edge_weathering = 0.0;
 // whichever of the world's axes it faces most, not to its own face, which turns
 // round the curve and smeared the texture far out of the world's middle.
 uniform bool curved = false;
+#ifdef LOOMING
+// The mist, drawn by the wall itself (the maze's walls: Wall.looming_shader), as
+// MazeLight.share_mist hands it on, so that far off the walls loom dark out of it
+// rather than fading into the sky (`looming`, 0: just as the mist would draw them).
+global uniform vec3 mist_colour;
+global uniform float mist_density;
+global uniform float mist_height;
+global uniform float mist_height_density;
+global uniform vec3 mist_sun;
+global uniform vec3 mist_sun_colour;
+// How brooding: 1 on a grey day, less on a sunny one (DayCycle), whose far walls stay light.
+global uniform float mist_brood;
+uniform float looming = 1.0;
+#endif
 
 varying vec3 at;
 varying vec3 facing;
@@ -212,6 +226,34 @@ void fragment() {
 		colour = mix(colour, cushion, cover);
 		moss = cover;
 	}
+#ifdef LOOMING
+	// Far off, what the texture can no longer show, drawn broader: the joints
+	// between its slabs, upright, a pixel or two wide (gone where they would
+	// crowd into a shimmer), and each slab a shade of its own; the whole wall a
+	// little darker the further off it is, and its foot darker still, in the
+	// gloom down there; and its top edge and corners a little paler, worn and lit
+	// by the sky, so that its outline holds.
+	float far_off = length(VERTEX);
+	float loom = looming * mist_brood;
+	float far = smoothstep(50.0, 260.0, far_off) * loom;
+	if (far > 0.0 && abs(n.y) < 0.5) {
+		float slabs = metres.x / tile_size;
+		float fw = fwidth(slabs);
+		float to_joint = abs(fract(slabs + 0.5) - 0.5);
+		float joint = (1.0 - smoothstep(0.06 / tile_size, 0.06 / tile_size + fw * 1.2, to_joint)) * (1.0 - smoothstep(0.1, 0.25, fw));
+		float later = smoothstep(100.0, 260.0, far_off) * looming;
+		colour *= 1.0 - joint * 0.16 * later;
+		colour *= 1.0 + (hash(vec2(floor(slabs), 7.0)) - 0.5) * 0.12 * later;
+		float foot = 1.0 - smoothstep(0.0, 40.0, at.y);
+		colour *= (1.0 - foot * 0.35 * far) * (1.0 - 0.25 * far);
+		if (UV2.x > 0.0) {
+			vec2 from_edge = UV2 - abs(UV);
+			float rim = 1.0 - smoothstep(0.0, max(0.3, fwidth(metres.y) * 2.5), from_edge.y);
+			float corner = 1.0 - smoothstep(0.0, max(0.3, fwidth(metres.x) * 1.5), from_edge.x);
+			colour = mix(colour, colour * 1.5 + vec3(0.03), max(rim, corner * 0.5) * far);
+		}
+	}
+#endif
 	ALBEDO = colour;
 
 	if (has_rough) {
@@ -242,6 +284,24 @@ void fragment() {
 		bent = normalize(mix(bent, normalize(n + (u_axis * lean + v_axis * tip) * 1.2), moss));
 	}
 	NORMAL = normalize((VIEW_MATRIX * (world_space ? vec4(bent, 0.0) : MODEL_MATRIX * vec4(bent, 0.0))).xyz);
+#ifdef LOOMING
+	// The mist over it: as the World's mist has it (thickening with distance, and
+	// below `mist_height`), but thinner high up, so that the tops loom out of it
+	// while the feet are lost in it; and, high up and far off, darker and bluer
+	// than the mist and never quite all mist, so that the walls stand against
+	// the sky as dark slabs, and paler towards the sun.
+	vec3 seen = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	float up = smoothstep(mist_height, 110.0, seen.y) * loom;
+	float amount = 1.0 - exp(min(0.0, -far_off * mist_density * mix(1.0, 0.7, up)));
+	if (abs(mist_height_density) >= 0.0001) {
+		amount = max(amount, 1.0 - exp(min(0.0, (seen.y - mist_height) * mist_height_density)));
+	}
+	float brood = up * smoothstep(40.0, 300.0, far_off);
+	vec3 tone = mix(mist_colour, mist_colour * vec3(0.62, 0.67, 0.77), brood);
+	float toward = pow(max(dot((seen - CAMERA_POSITION_WORLD) / max(far_off, 0.001), mist_sun), 0.0), 6.0);
+	tone += mist_sun_colour * toward * 0.12 * looming;
+	FOG = vec4(tone, amount * mix(1.0, 0.8, brood));
+#endif
 }
 """
 
@@ -334,6 +394,7 @@ void fragment() {
 		_build()
 
 static var _shader: Shader
+static var _looming_shader: Shader
 
 var _mesh: MeshInstance3D
 var _shape: CollisionShape3D
@@ -353,11 +414,12 @@ static func maps_for(chosen: Look) -> Array:
 
 
 ## The surface of a look, as a material for anything (`world_space`: laid on in the
-## world's space, so that many boxes meet without seams).
-static func material_for(chosen: Look, world_space := false, tint := Color.WHITE) -> ShaderMaterial:
+## world's space, so that many boxes meet without seams; `looming`: with the
+## looming_shader, for the maze's walls).
+static func material_for(chosen: Look, world_space := false, tint := Color.WHITE, looming := false) -> ShaderMaterial:
 	var maps := maps_for(chosen)
 	var material := ShaderMaterial.new()
-	material.shader = shader()
+	material.shader = looming_shader() if looming else shader()
 	_apply(material, maps[0], maps[1], maps[2], 0.9, LOOKS[chosen][1], 1.0, tint, 1.0, 0.22, 0.35)
 	material.set_shader_parameter(&"world_space", world_space)
 	return material
@@ -369,6 +431,19 @@ static func shader() -> Shader:
 		_shader = Shader.new()
 		_shader.code = SHADER
 	return _shader
+
+
+## The wall's shader drawing its own mist (the maze's walls, laid on in the
+## world's space), so that far off they loom out of it as dark slabs against the
+## sky instead of fading to grey blobs (the user, 2026-10-19: "The Maze walls
+## kind of just becom ugly featureless gray blobs in the distance- is there a way
+## we can spruce up how the fog affects them so that we get amore brooding looming
+## cinematic visual?"). The mist is the World's, handed on by MazeLight.share_mist.
+static func looming_shader() -> Shader:
+	if _looming_shader == null:
+		_looming_shader = Shader.new()
+		_looming_shader.code = SHADER.replace("shader_type spatial;", "shader_type spatial;\n#define LOOMING")
+	return _looming_shader
 
 
 static func _apply(material: ShaderMaterial, colour: Texture2D, bump: Texture2D, rough: Texture2D, rough_value: float, tile: float, strength: float, shade: Color, broken: float, wander: float, rain := 0.35) -> void:

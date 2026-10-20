@@ -48,6 +48,7 @@ var thicken := 0.0
 var _fog_base := Color.WHITE
 var _ambient_base := 1.0
 var _flashed := false
+var _brood := 1.0
 
 var _sun: DirectionalLight3D
 var _environment: Environment
@@ -101,6 +102,7 @@ func _process(delta: float) -> void:
 		_flashed = flash > 0.0
 		_environment.fog_light_color = _fog_base.lerp(Color(0.86, 0.9, 1.0), flash * 0.55)
 		_environment.ambient_light_energy = _ambient_base + flash * 1.6
+		MazeLight.share_mist(_environment, _sun, _brood)
 	var day_now := is_day()
 	if day_now != _was_day:
 		_was_day = day_now
@@ -181,9 +183,12 @@ func _apply() -> void:
 		_environment.fog_light_color = Color(0.15, 0.18, 0.22).lerp((_day["fog"] as Color).lerp(blue_haze, sunshine).lerp(dusk_horizon, low * 0.35).lerp(grey, gloom * 0.5), light)
 		_environment.ambient_light_energy = lerpf(0.55, _day["ambient"] * lerpf(1.0, 1.2, sunshine), light) * (1.0 - gloom * 0.25)
 		var clear := lerpf(1.0, 0.3, sunshine * light)
+		# (the far walls brooding dark against the sky on a grey day, light on a sunny one: Wall.looming_shader)
+		_brood = lerpf(1.0, 0.35, sunshine * light)
 		_environment.fog_density = _day["fog_density"] * (1.0 + gloom * 0.9) * clear * (1.0 + thicken)
 		_environment.fog_height_density = _day["fog_height_density"] * clear
 		_environment.adjustment_saturation = lerpf(_day["saturation"], 1.0, sunshine * light)
 		_fog_base = _environment.fog_light_color
 		mist = _fog_base
 		_ambient_base = _environment.ambient_light_energy
+		MazeLight.share_mist(_environment, _sun, _brood)

@@ -48,3 +48,34 @@ renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 textures/vram_compression/import_etc2_astc=true
 anti_aliasing/quality/use_debanding=true
+
+[shader_globals]
+
+mist_colour={
+"type": "vec3",
+"value": Vector3(0.4, 0.45, 0.44)
+}
+mist_density={
+"type": "float",
+"value": 0.0045
+}
+mist_height={
+"type": "float",
+"value": 6.0
+}
+mist_height_density={
+"type": "float",
+"value": 0.004
+}
+mist_sun={
+"type": "vec3",
+"value": Vector3(0, 1, 0)
+}
+mist_sun_colour={
+"type": "vec3",
+"value": Vector3(0, 0, 0)
+}
+mist_brood={
+"type": "float",
+"value": 1.0
+}

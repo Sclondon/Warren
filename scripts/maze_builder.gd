@@ -255,7 +255,7 @@ func _walls(body: StaticBody3D, pieces: MazeLayout) -> void:
 		var style := _style_of(key[2])
 		if not materials.has(kind):
 			# (laid on in the world's space, so that the pieces meet without seams)
-			materials[kind] = Wall.material_for(key[0], true, LEDGE_TINT if key[0] == LEDGE_LOOK else Color.WHITE)
+			materials[kind] = Wall.material_for(key[0], true, LEDGE_TINT if key[0] == LEDGE_LOOK else Color.WHITE, true)
 			if key[0] == GREAT_LOOK:
 				# (the great walls are so big that their concrete is drawn bigger too)
 				materials[kind].set_shader_parameter(&"tile_size", Wall.LOOKS[GREAT_LOOK][1] * GREAT_TILE_SCALE)

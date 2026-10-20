@@ -38,7 +38,11 @@ own), seen and lit like *Inside*. A secret cart in the Scareathon arcade (code *
   slide, roll and trip with believable hands and ankles. Reference: `videoplayback.mp4`.
 - **Light.** Inside's: overcast, misty, nearly colourless but for the red shirt; soft light from above, soft
   shadows. Mist thick enough to lose the far walls, but not so thick the maze is grey mush (lighter on the title and
-  in the editor).
+  in the editor). Far off the walls loom out of the mist as dark slabs against the sky rather than fading into it
+  (2026-10-19: "The Maze walls kind of just becom ugly featureless gray blobs in the distance ... amore brooding
+  looming cinematic visual"): the mist thinner high up, so the tops loom while the feet are lost in it; darker and
+  bluer high and far, never quite all mist; the slabs' joints and shades, the top edge and corners kept at a
+  distance; lighter towards the sun, and light still on a sunny day (`Wall.looming_shader`, `MazeLight.share_mist`).
 - **Weather** (`Weather`, from the room's seed, the same for everyone): spells of overcast, heavy cloud, rain (a
   sprinkle, steady rain, a downpour, a thunderstorm) and, now and then, a clear sunny day with a blue sky (2026-10-18:
   "There should also be sunny days with blue sky"). Rain thin, never thick white bars: fine streaks, droplets close
