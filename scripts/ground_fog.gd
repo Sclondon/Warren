@@ -32,8 +32,17 @@ const STIR_REACH := 40.0
 var world: Node
 var _sheet: MeshInstance3D
 var _look: ShaderMaterial
-## The wake: [x, z, the second it was left, how wide] for each point.
+## The wake: [x, z, the second it was left, how wide] for each point, and where
+## the same body left the point before it ([x, z]; the point itself if none), so
+## that the wake is drawn as a track from one to the next, not as round holes
+## (the user, 2026-10-19: "the fog wake looks more like circles appearring than a
+## smooth break in the fog").
 var _trail := PackedVector4Array()
+var _trail_from := PackedVector2Array()
+## From each stirring body's last point to where it is now ([x, z, x, z]), and how
+## wide: the newest stretch of its wake, which follows it as it goes.
+var _heads := PackedVector4Array()
+var _head_wide := PackedFloat32Array()
 var _trail_size := 32
 var _next := 0
 var _clock := 0.0
@@ -58,10 +67,14 @@ func _ready() -> void:
 	_trail_size = TRAIL.y if low else TRAIL.x
 	for i in _trail_size:
 		_trail.append(Vector4(0.0, 0.0, -1000.0, 1.0))
+		_trail_from.append(Vector2.ZERO)
+	for i in STIRRERS:
+		_heads.append(Vector4.ZERO)
+		_head_wide.append(0.0)
 	var plane := PlaneMesh.new()
 	plane.size = Vector2.ONE * REACH * 2.0
 	var shader := Shader.new()
-	shader.code = SHADER.replace("TRAIL_SIZE", str(_trail_size)).replace("//LOW", "#define LOW" if low else "")
+	shader.code = SHADER.replace("TRAIL_SIZE", str(_trail_size)).replace("STIRRERS", str(STIRRERS)).replace("//LOW", "#define LOW" if low else "")
 	_look = ShaderMaterial.new()
 	_look.shader = shader
 	_look.set_shader_parameter(&"reach", REACH)
@@ -95,6 +108,9 @@ func show_fog(amount: float, height: float, wind: float, light: float, mist: Col
 	_look.set_shader_parameter(&"wind", Vector2(0.35, 0.12) * (1.0 + wind * 4.0))
 	_look.set_shader_parameter(&"clock", _clock)
 	_look.set_shader_parameter(&"trail", _trail)
+	_look.set_shader_parameter(&"trail_from", _trail_from)
+	_look.set_shader_parameter(&"heads", _heads)
+	_look.set_shader_parameter(&"head_wide", _head_wide)
 
 
 ## The wake: a point left behind each body near the camera every WAKE_STEP it goes.
@@ -103,21 +119,28 @@ func _stir(eye: Vector3, top: float, delta: float) -> void:
 	if _look_for <= 0.0:
 		_look_for = 1.0
 		_find_stirrers(eye)
-	for body in _stirrers:
+	for k in STIRRERS:
+		_head_wide[k] = 0.0
+	for k in _stirrers.size():
+		var body := _stirrers[k]
 		if not is_instance_valid(body):
 			continue
 		var at := body.global_position
 		# (only what is down in it)
 		if at.y > top + 0.3:
 			continue
+		var wide := 0.9 if body is MazeEnemy else 0.7
 		var last: Vector3 = _last_at.get(body, Vector3.INF)
 		if last == Vector3.INF or at.distance_squared_to(last) > WAKE_STEP * WAKE_STEP:
+			# (joined to its last point, unless it jumped: put somewhere, or a new body)
+			var from := Vector2(last.x, last.z) if last != Vector3.INF and at.distance_to(last) < WAKE_STEP * 4.0 else Vector2(at.x, at.z)
 			_last_at[body] = at
-			var wide := 0.7
-			if body is MazeEnemy:
-				wide = 0.9
 			_trail[_next] = Vector4(at.x, at.z, _clock, wide)
+			_trail_from[_next] = from
 			_next = (_next + 1) % _trail_size
+			last = at
+		_heads[k] = Vector4(last.x, last.z, at.x, at.z)
+		_head_wide[k] = wide
 
 
 ## The nearest few bodies to the camera: the players and runners, and the hunters.
@@ -148,6 +171,7 @@ func _find_stirrers(eye: Vector3) -> void:
 ## Stirs the fog at a point now (for tests and pictures).
 func stir_at(at: Vector3, wide := 0.7) -> void:
 	_trail[_next] = Vector4(at.x, at.z, _clock, wide)
+	_trail_from[_next] = Vector2(at.x, at.z)
 	_next = (_next + 1) % _trail_size
 
 
@@ -171,6 +195,11 @@ uniform float clock = 0.0;
 uniform float wake_seconds = 7.0;
 // [x, z, the clock when it was left, how wide] for each point of the wake.
 uniform vec4 trail[TRAIL_SIZE];
+// Where the same body left the point before each ([x, z]): each point is the end of a stretch from it.
+uniform vec2 trail_from[TRAIL_SIZE];
+// The newest stretch of each stirring body's wake, from its last point to it ([x, z, x, z]), and how wide (0: none).
+uniform vec4 heads[STIRRERS];
+uniform float head_wide[STIRRERS];
 uniform sampler2D depth_texture : hint_depth_texture, filter_nearest, repeat_disable;
 
 varying vec3 at;
@@ -184,6 +213,13 @@ float vnoise(vec2 p) {
 	vec2 f = fract(p);
 	f = f * f * (3.0 - 2.0 * f);
 	return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), f.x), mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+
+// From `p` to the nearest point of the stretch from `a` to `b`.
+vec2 off_stretch(vec2 p, vec2 a, vec2 b) {
+	vec2 ab = b - a;
+	float t = clamp(dot(p - a, ab) / max(dot(ab, ab), 0.0001), 0.0, 1.0);
+	return p - (a + ab * t);
 }
 
 vec3 unproject(vec2 screen_uv, float depth, mat4 inv_projection) {
@@ -206,22 +242,33 @@ void fragment() {
 	float through = max(length(behind) - length(VERTEX), 0.0);
 	// The wake: how much the fog is pushed away here, and which way (to swirl it).
 	vec2 here = mix(at.xz, under.xz, 0.35);
-	float cleared = 0.0;
+	// (each stretch of track clears a soft band along it, widening and closing up
+	// as it ages; overlapping ones blend, not the strongest alone, so no edges)
+	float kept = 1.0;
 	vec2 push = vec2(0.0);
 	for (int i = 0; i < TRAIL_SIZE; i++) {
 		vec4 point = trail[i];
 		float age = (clock - point.z) / wake_seconds;
 		if (age < 1.0) {
-			vec2 off = here - point.xy;
+			vec2 off = off_stretch(here, trail_from[i], point.xy);
 			float wide = point.w * mix(1.0, 2.2, age);
 			float d = length(off);
-			float c = (1.0 - smoothstep(wide * 0.1, wide, d)) * pow(1.0 - age, 1.6);
-			if (c > cleared) {
-				cleared = c;
-				push = off / max(d, 0.001) * (1.0 - age);
-			}
+			float c = pow(1.0 - smoothstep(0.0, wide, d), 2.0) * pow(1.0 - age, 1.6);
+			kept *= 1.0 - c;
+			push += off / max(d, 0.001) * c * (1.0 - age);
 		}
 	}
+	for (int k = 0; k < STIRRERS; k++) {
+		if (head_wide[k] > 0.0) {
+			vec2 off = off_stretch(here, heads[k].xy, heads[k].zw);
+			float d = length(off);
+			float c = pow(1.0 - smoothstep(0.0, head_wide[k], d), 2.0);
+			kept *= 1.0 - c;
+			push += off / max(d, 0.001) * c;
+		}
+	}
+	float cleared = 1.0 - kept;
+	push = push / max(length(push), 1.0);
 	// Its top: two layers of noise drifting with the wind, the wake swirling them aside.
 	vec2 p = here + push * cleared * 1.5;
 	float n = vnoise(p * 0.11 + wind * clock * 0.11) * 0.6 + vnoise(p * 0.31 - wind.yx * clock * 0.23) * 0.4;
