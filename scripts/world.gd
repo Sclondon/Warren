@@ -480,7 +480,10 @@ func _physics_process(delta: float) -> void:
 		_send_in -= delta
 		if _send_in <= 0.0:
 			_send_in = SEND_EVERY
-			Net.send(Net.BROADCAST, K_STATE, _state(slot, player.global_position, player.velocity, player.facing_yaw, player.is_on_floor()))
+			var news := _state(slot, player.global_position, player.velocity, player.facing_yaw, player.is_on_floor())
+			# (and what he is doing, for the others to see him do it)
+			news.append_array(RemotePlayer.doings_of(player))
+			Net.send(Net.BROADCAST, K_STATE, news)
 		if Net.is_host:
 			_enemies_in -= delta
 			if _enemies_in <= 0.0:
@@ -542,6 +545,8 @@ func _on_packet(from: int, kind: int, data: PackedByteArray) -> void:
 			Vector3(data.decode_float(1), data.decode_float(5), data.decode_float(9)),
 			Vector3(data.decode_float(13), data.decode_float(17), data.decode_float(21)),
 			data.decode_float(25), data[29] == 1)
+		if data.size() > 30:
+			remotes[seat].hear_doings(data.slice(30))
 	elif kind == K_ENEMIES and not Net.is_host:
 		var at := enemies.unpack(data, 0)
 		if data.size() >= at + Griever.STATE_SIZE:
