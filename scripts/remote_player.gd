@@ -29,6 +29,8 @@ var _target_velocity := Vector3.ZERO
 var _target_yaw := 0.0
 var _grounded := true
 var _heard := false
+## How long their game has had them off the ground (the rig reads it, as the Player's).
+var air_time := 0.0
 
 
 func _init() -> void:
@@ -59,8 +61,11 @@ func _physics_process(delta: float) -> void:
 	_target += _target_velocity * delta
 	var wish := _target_velocity + (_target - global_position) * 6.0
 	velocity = wish
-	if _grounded and is_on_floor():
-		velocity.y = minf(velocity.y, 0.0)
+	air_time = 0.0 if _grounded else air_time + delta
+	# (on the ground they are pressed to it: nothing else pulls them down, and
+	# without touching it the rig would hold them in a jump)
+	if _grounded:
+		velocity.y = minf(velocity.y, -1.0)
 	move_and_slide()
 	# (a wall between where they are drawn and where they are is no reason to lag behind)
 	if global_position.distance_to(_target) > 2.5:
